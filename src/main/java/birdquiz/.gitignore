@@ -1,0 +1,32 @@
+@"
+# Maven build output
+target/
+!.mvn/wrapper/maven-wrapper.jar
+
+# Compiled/IDE
+*.class
+*.log
+.vscode/
+.idea/
+*.iml
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+bin/
+META-INF/
+
+# Ignore media payloads; keep placeholders
+src/main/resources/images/**
+!src/main/resources/images/.gitkeep
+src/main/resources/sounds/**
+!src/main/resources/sounds/.gitkeep
+src/main/resources/buttons/**
+!src/main/resources/buttons/.gitkeep
+
+# Always keep Arduino & DB
+!arduino/**
+!db/**
+"@ | Set-Content C:\dev\birdquiz-clean\.gitignore
