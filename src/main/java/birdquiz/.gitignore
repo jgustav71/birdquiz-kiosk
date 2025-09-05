@@ -14,11 +14,11 @@ target/
 .DS_Store
 Thumbs.db
 
-# Build artifacts
+# Other build artifacts
 bin/
 META-INF/
 
-# Ignore media payloads; keep placeholders
+# Ignore media payloads; keep folders (.gitkeep)
 src/main/resources/images/**
 !src/main/resources/images/.gitkeep
 src/main/resources/sounds/**
@@ -29,4 +29,4 @@ src/main/resources/buttons/**
 # Always keep Arduino & DB
 !arduino/**
 !db/**
-"@ | Set-Content C:\dev\birdquiz-clean\.gitignore
+"@ | Set-Content C:\dev\birdquiz-kiosk\.gitignore
