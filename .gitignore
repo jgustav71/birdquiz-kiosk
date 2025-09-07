@@ -1,16 +1,9 @@
-# Maven
 target/
-
-# Build artifacts
 *.jar
 *.war
 *.zip
-
-# IDE
 .idea/
 .vscode/
 *.iml
-
-# OS
 .DS_Store
 Thumbs.db
