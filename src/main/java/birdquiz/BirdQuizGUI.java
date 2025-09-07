@@ -206,10 +206,10 @@ private void loadAndResizeImages() throws IOException {
 
     private void setupSubmitPanel(GridBagConstraints gbc) {
         submitButton = new JButton("Submit", submitIcon);
-        submitButton.setPreferredSize(new Dimension(150, 60));
+        submitButton.setPreferredSize(new Dimension(200, 60));
         submitButton.setHorizontalTextPosition(SwingConstants.RIGHT);
         submitButton.setVerticalTextPosition(SwingConstants.CENTER);
-        submitButton.setFont(new Font("Arial", Font.BOLD, 20));
+        submitButton.setFont(new Font("Arial", Font.BOLD, 15));
         submitButton.setContentAreaFilled(false);
         submitButton.setBorderPainted(false);
         submitButton.addActionListener(this);
@@ -652,7 +652,8 @@ private void handleSerialInput(String input) {
             "/images/",
             "/images/songbirds/",
             "/images/ducks/",
-            "/images/raptors/"
+            "/images/raptors/",
+            "/images/shorebirds/"
         };
 
         for (String base : basePaths) {
