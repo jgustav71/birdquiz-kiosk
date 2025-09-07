@@ -14,3 +14,9 @@
 # OS
 .DS_Store
 Thumbs.db
+
+# Ignore Maven build output
+target/
+*.jar
+
+
