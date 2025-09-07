@@ -1,22 +1,19 @@
-﻿# Maven
-/target/
+# Maven
+target/
 
-# Binaries
+# Build artifacts (don?t commit)
 *.jar
 *.war
 *.zip
 
+# Keep Maven wrapper if you use it
+!.mvn/wrapper/maven-wrapper.jar
+
 # IDE
-/.idea/
-/.vscode/
+.idea/
+.vscode/
 *.iml
 
-# OS
+# OS noise
 .DS_Store
 Thumbs.db
-
-# Ignore Maven build output
-target/
-*.jar
-
-
