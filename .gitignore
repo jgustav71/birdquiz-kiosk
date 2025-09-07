@@ -1,28 +1,16 @@
-﻿@'
 # Maven
 target/
 
-# Build artifacts (don’t commit)
+# Build artifacts
 *.jar
 *.war
 *.zip
-
-# Keep Maven wrapper if you use it
-!.mvn/wrapper/maven-wrapper.jar
 
 # IDE
 .idea/
 .vscode/
 *.iml
 
-# OS noise
+# OS
 .DS_Store
 Thumbs.db
-'@ | Set-Content -Encoding ascii .gitignore
-
-# Large media/binaries (adjust as needed)
-src/main/resources/**/*.mp4
-src/main/resources/**/*.wav
-src/main/resources/**/*.mp3
-src/main/resources/**/*.zip
-src/main/resources/**/raw/**
