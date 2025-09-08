@@ -1,4 +1,4 @@
-@'
+﻿@'
 # Maven
 target/
 
@@ -16,3 +16,8 @@ target/
 .DS_Store
 Thumbs.db
 '@ | Set-Content -Encoding ascii .gitignore
+src/main/resources/images/slideshow_menu/**
+!src/main/resources/images/slideshow_menu/.keep
+# Slideshow assets (kept local)
+src/main/resources/images/slideshow_menu/**
+!src/main/resources/images/slideshow_menu/.keep
