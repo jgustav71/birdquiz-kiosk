@@ -20,6 +20,7 @@ public class BirdQuizGUI extends JFrame implements ActionListener {
     private static final String DB_USERNAME = "root";
     private static final String DB_PASSWORD = "Neskowin71";
     private static final int MAX_QUESTIONS = 5;
+    private IdleSlideshowOverlay slideshow;
 
     private static final Font RADIO_BUTTON_FONT = new Font("Arial", Font.PLAIN, 16);
     private static final Font BOTTOM_BUTTON_FONT = new Font("Arial", Font.BOLD, 30);
@@ -79,6 +80,18 @@ public class BirdQuizGUI extends JFrame implements ActionListener {
         this.email = email;
         this.quizScoreProcessor = new QuizScoreProcessor();
 
+
+          // attach slideshow: idle 30s, slide every 6s
+         slideshow = IdleSlideshowOverlay.attachTo(
+         this,
+         IdleSlideshowOverlay.resources("/images/slideshow",
+                "splash1.jpg", "splash2.jpg", "splash3.jpg"),
+         10_000L,
+         6_000L
+         );
+
+
+
         // Serial first (non-blocking)
         openQuizSerial();
 
@@ -88,10 +101,11 @@ public class BirdQuizGUI extends JFrame implements ActionListener {
                 if (quizSerialWatchdog != null) quizSerialWatchdog.stop();
                 robustCloseQuizSerial();
             }
-            @Override public void windowClosed(WindowEvent e) {
-                if (quizSerialWatchdog != null) quizSerialWatchdog.stop();
-                robustCloseQuizSerial();
-            }
+           @Override public void windowClosed(WindowEvent e) {
+    if (quizSerialWatchdog != null) quizSerialWatchdog.stop();
+    robustCloseQuizSerial();
+    if (slideshow != null) slideshow.shutdown();
+}
         });
 
         // DB + UI
@@ -209,6 +223,7 @@ public class BirdQuizGUI extends JFrame implements ActionListener {
     }
 
     private void handleQuizEspToken(String token) {
+        if (slideshow != null) slideshow.poke();
         System.out.println("[QUIZ] ESP token: " + token);
         setSerialStatus("Serial: " + quizPortName + " (" + token + ")");
 
@@ -606,7 +621,7 @@ public class BirdQuizGUI extends JFrame implements ActionListener {
 private void restartQuiz() {
     currentQuestionIndex = 0;
     score = 0;
-    totalQuestionsAnswered = 0;w
+    totalQuestionsAnswered = 0;
     try {
         questions = fetchBirdQuestions();
         if (questions == null || questions.size() < MAX_QUESTIONS) {

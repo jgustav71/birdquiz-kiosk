@@ -14,6 +14,8 @@ import javax.swing.border.EmptyBorder;
 import com.fazecast.jSerialComm.SerialPort;
 
 public class MainMenu extends JFrame implements ActionListener {
+    // Idle slideshow overlay for the menu
+     private IdleSlideshowOverlay slideshow;
 
     // ---- UI: category buttons ----
     private CircleButton songbirdsBtn;  // blue
@@ -91,14 +93,39 @@ public class MainMenu extends JFrame implements ActionListener {
 
         // Reconnect when menu regains focus; release on close
         addWindowListener(new WindowAdapter() {
-            @Override public void windowOpened(WindowEvent e) { ensureSerial(); }
-            @Override public void windowActivated(WindowEvent e) { ensureSerial(); }
-            @Override public void windowDeiconified(WindowEvent e) { ensureSerial(); }
-            @Override public void windowClosing(WindowEvent e) { closeSerial(); }
-            @Override public void windowClosed (WindowEvent e) { closeSerial(); }
-        });
+    @Override public void windowOpened(WindowEvent e)       { ensureSerial(); }
+    @Override public void windowActivated(WindowEvent e)    { ensureSerial(); }
+    @Override public void windowDeiconified(WindowEvent e)  { ensureSerial(); }
+
+    @Override public void windowClosing(WindowEvent e) {
+        if (slideshow != null) { slideshow.shutdown(); slideshow = null; }
+        closeSerial();
+    }
+
+    @Override public void windowClosed(WindowEvent e) {
+        if (slideshow != null) { slideshow.shutdown(); slideshow = null; }
+        closeSerial();
+    }
+});
+
 
         setVisible(true);
+
+// Attach an idle slideshow overlay: show after 2 minutes idle, switch every 6 seconds
+slideshow = IdleSlideshowOverlay.attachTo(
+    this,
+    IdleSlideshowOverlay.resources(
+        "/images/slideshow_menu",     // put your images here (classpath)
+        "splash1.jpg",
+        "splash2.jpg",
+        "splash3.jpg"
+    ),
+    120_000L,   // idle delay (2 minutes)
+    6_000L      // slide duration (6 seconds)
+);
+
+
+
     }
 
     private void ensureSerial() {
@@ -231,8 +258,9 @@ public class MainMenu extends JFrame implements ActionListener {
             handleEspCommand(line);
         }
     }
-
+  // Any ESP/serial activity should cancel or hide the slideshow
     private void handleEspCommand(String token) {
+          if (slideshow != null) slideshow.poke();
         switch (token) {
             case "blue":
                 System.out.println("[MENU] ESP -> blue (Songbirds)");
@@ -323,6 +351,8 @@ public class MainMenu extends JFrame implements ActionListener {
                 error = ex;
             }
             final BirdQuizGUI quizFinal = quiz;
+             if (slideshow != null) { slideshow.shutdown(); slideshow = null; }
+
             final Throwable errFinal = error;
             SwingUtilities.invokeLater(() -> {
                 loading.dispose();
