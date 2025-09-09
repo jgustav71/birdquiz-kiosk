@@ -15,26 +15,31 @@ import com.fazecast.jSerialComm.SerialPort;
 
 public class MainMenu extends JFrame implements ActionListener {
     // Idle slideshow overlay for the menu
-     private IdleSlideshowOverlay slideshow;
+    private IdleSlideshowOverlay slideshow;
 
     // ---- UI: category buttons ----
-    private CircleButton songbirdsBtn;  // blue
-    private CircleButton ducksBtn;      // green
-    private CircleButton raptorsBtn;    // yellow
-    private CircleButton shorebirdsBtn; // white
+    private CircleButton songbirdsBtn;   // blue
+    private CircleButton ducksBtn;       // green
+    private CircleButton raptorsBtn;     // yellow
+    private CircleButton shorebirdsBtn;  // white
 
-    // ---- Serial state ----
-    private SerialPort serialPort;
-    private final StringBuilder serialBuf = new StringBuilder(512);
-    private String connectedPortName = "none";
+    // --- MainMenu serial fields (new, robust path) ---
+    private SerialPort menuPort;
+    private javax.swing.Timer menuWatchdog;     // reconnect loop
+    private long lastMenuSerialAttemptMs = 0L;  // throttle reconnect attempts
+    private final StringBuilder menuSerialBuf = new StringBuilder(512);
+    private final java.util.Map<String, Long> menuDebounce = new java.util.HashMap<>();
+    private static final long MENU_DEBOUNCE_MS = 200;
 
-    // ---- Debounce for ESP tokens ----
-    private final Map<String, Long> debounceMap = new HashMap<>();
-    private static final long DEBOUNCE_MS = 200;
+    // Small status UI (optional)
+    private JLabel menuSerialStatusLabel;   // “Serial: ...”
+    private JButton menuResetSerialButton;  // if you add a button in future
 
-    // ---- UI: status + watchdog ----
+    // Remember user choice; "auto" means auto-detect
+    private String menuPortName = "auto";
+
+    // Footer status
     private JLabel statusLabel;
-    private Timer serialWatchdog; // tries reconnect periodically
 
     public MainMenu() {
         setTitle("Bird Quiz - Main Menu");
@@ -48,14 +53,10 @@ public class MainMenu extends JFrame implements ActionListener {
         GridBagConstraints gbc = new GridBagConstraints();
         gbc.insets = new Insets(20, 20, 20, 20);
 
-        songbirdsBtn = new CircleButton("Songbirds", new Color(35,116,232), Color.WHITE,
-                "/images/hover-songbirds.png");
-        ducksBtn     = new CircleButton("Ducks",     new Color(35,166, 92), Color.WHITE,
-                "/images/hover-ducks.png");
-        raptorsBtn   = new CircleButton("Raptors",   new Color(236,202,49), Color.WHITE,
-                "/images/hover-raptors.png");
-        shorebirdsBtn = new CircleButton("Shorebirds", Color.WHITE, Color.BLACK,
-                "/images/hover-shorebirds.png");
+        songbirdsBtn  = new CircleButton("Songbirds",  new Color(35,116,232), Color.WHITE,  "/images/hover-songbirds.png");
+        ducksBtn      = new CircleButton("Ducks",      new Color(35,166, 92), Color.WHITE,  "/images/hover-ducks.png");
+        raptorsBtn    = new CircleButton("Raptors",    new Color(236,202,49), Color.WHITE,  "/images/hover-raptors.png");
+        shorebirdsBtn = new CircleButton("Shorebirds", Color.WHITE,           Color.BLACK,  "/images/hover-shorebirds.png");
 
         gbc.gridx = 0; gbc.gridy = 0; center.add(songbirdsBtn, gbc);
         gbc.gridx = 1; gbc.gridy = 0; center.add(ducksBtn, gbc);
@@ -64,9 +65,11 @@ public class MainMenu extends JFrame implements ActionListener {
 
         add(center, BorderLayout.CENTER);
 
+        // Footer status (also used as serial status)
         statusLabel = new JLabel("Serial: none", SwingConstants.RIGHT);
         statusLabel.setBorder(new EmptyBorder(0, 12, 12, 12));
         add(statusLabel, BorderLayout.SOUTH);
+        menuSerialStatusLabel = statusLabel;
 
         // Hover + press feedback + SFX
         installHoverAndPress(songbirdsBtn);
@@ -80,60 +83,266 @@ public class MainMenu extends JFrame implements ActionListener {
         raptorsBtn.addActionListener(this);
         shorebirdsBtn.addActionListener(this);
 
-        // Serial open + watchdog
-        autoConnectSerial();
-        serialWatchdog = new Timer(3000, e -> {
-            if (serialPort == null || !serialPort.isOpen()) {
-                statusLabel.setText("Serial: reconnecting…");
-                showTemporaryMessage("Serial: reconnecting…");
-                autoConnectSerial();
+        // --- Robust serial bring-up + watchdog ---
+        openMenuSerial();
+        if (menuWatchdog != null) {
+            try { menuWatchdog.stop(); } catch (Exception ignore) {}
+        }
+        menuWatchdog = new javax.swing.Timer(3000, e -> {
+            boolean needPort = true; // set false if user disables serial in a future settings UI
+            boolean open = (menuPort != null && menuPort.isOpen());
+            if (needPort && !open) reconnectMenuSerial();
+        });
+        menuWatchdog.start();
+
+        // --- Window lifecycle ---
+        addWindowListener(new WindowAdapter() {
+            @Override public void windowClosing(WindowEvent e) {
+                if (slideshow != null) { slideshow.shutdown(); slideshow = null; }
+                if (menuWatchdog != null) menuWatchdog.stop();
+                robustCloseMenuSerial();
+            }
+            @Override public void windowClosed(WindowEvent e) {
+                if (slideshow != null) { slideshow.shutdown(); slideshow = null; }
+                if (menuWatchdog != null) menuWatchdog.stop();
+                robustCloseMenuSerial();
+            }
+            @Override public void windowActivated(WindowEvent e) {
+                if (menuPort == null || !menuPort.isOpen()) reconnectMenuSerial();
+            }
+            @Override public void windowDeiconified(WindowEvent e) {
+                if (menuPort == null || !menuPort.isOpen()) reconnectMenuSerial();
             }
         });
-        serialWatchdog.start();
 
-        // Reconnect when menu regains focus; release on close
-        addWindowListener(new WindowAdapter() {
-    @Override public void windowOpened(WindowEvent e)       { ensureSerial(); }
-    @Override public void windowActivated(WindowEvent e)    { ensureSerial(); }
-    @Override public void windowDeiconified(WindowEvent e)  { ensureSerial(); }
-
-    @Override public void windowClosing(WindowEvent e) {
-        if (slideshow != null) { slideshow.shutdown(); slideshow = null; }
-        closeSerial();
-    }
-
-    @Override public void windowClosed(WindowEvent e) {
-        if (slideshow != null) { slideshow.shutdown(); slideshow = null; }
-        closeSerial();
-    }
-});
-
+        // Idle slideshow overlay (2 min idle, 6 sec per slide)
+        slideshow = IdleSlideshowOverlay.attachTo(
+            this,
+            IdleSlideshowOverlay.resources(
+                "/images/slideshow_menu",
+                "splash1.jpg",
+                "splash2.jpg",
+                "splash3.jpg"
+            ),
+            120_000L,
+            6_000L
+        );
 
         setVisible(true);
-
-// Attach an idle slideshow overlay: show after 2 minutes idle, switch every 6 seconds
-slideshow = IdleSlideshowOverlay.attachTo(
-    this,
-    IdleSlideshowOverlay.resources(
-        "/images/slideshow_menu",     // put your images here (classpath)
-        "splash1.jpg",
-        "splash2.jpg",
-        "splash3.jpg"
-    ),
-    120_000L,   // idle delay (2 minutes)
-    6_000L      // slide duration (6 seconds)
-);
-
-
-
     }
 
-    private void ensureSerial() {
-        if (serialWatchdog != null && !serialWatchdog.isRunning()) serialWatchdog.start();
-        if (serialPort == null || !serialPort.isOpen()) autoConnectSerial();
+
+
+
+
+
+        // =========================
+    // Serial helpers
+    // =========================
+
+    private void setMenuSerialStatus(String text) {
+        if (menuSerialStatusLabel != null) menuSerialStatusLabel.setText(text);
     }
 
-    // ---- Hover + Press visual/audio feedback ----
+    private void setMenuResetEnabled(boolean enabled) {
+        if (menuResetSerialButton != null) menuResetSerialButton.setEnabled(enabled);
+    }
+
+    private SerialPort chooseAutoPort() {
+        SerialPort[] ports = SerialPort.getCommPorts();
+        SerialPort fallback = (ports.length > 0 ? ports[0] : null);
+
+        for (SerialPort p : ports) {
+            String sys  = String.valueOf(p.getSystemPortName()).toLowerCase();
+            String desc = String.valueOf(p.getDescriptivePortName()).toLowerCase();
+            String info = String.valueOf(p.getPortDescription()).toLowerCase();
+
+            boolean looksUsb = sys.contains("usb") || sys.contains("com")
+                            || desc.contains("usb") || info.contains("usb");
+            boolean looksEsp = desc.contains("cp210") || desc.contains("ch340")
+                            || desc.contains("silicon labs") || desc.contains("esp")
+                            || info.contains("cp210") || info.contains("ch340")
+                            || info.contains("silicon labs") || info.contains("esp");
+
+            if (looksUsb && looksEsp) return p;
+        }
+        return fallback;
+    }
+
+    private void openMenuSerial() {
+        try {
+            SerialPort target = "auto".equalsIgnoreCase(menuPortName)
+                    ? chooseAutoPort()
+                    : SerialPort.getCommPort(menuPortName);
+
+            if (target == null) {
+                setMenuSerialStatus("Serial: none (no ports)");
+                setMenuResetEnabled(true);
+                return;
+            }
+
+            menuPort = target;
+            menuPort.setBaudRate(115200);
+            menuPort.setNumDataBits(8);
+            menuPort.setNumStopBits(SerialPort.ONE_STOP_BIT);
+            menuPort.setParity(SerialPort.NO_PARITY);
+            menuPort.setComPortTimeouts(SerialPort.TIMEOUT_READ_SEMI_BLOCKING, 100, 0);
+            try { menuPort.setDTR(); } catch (Throwable ignore) {}
+            try { menuPort.setRTS(); } catch (Throwable ignore) {}
+
+            if (!menuPort.openPort()) {
+                setMenuSerialStatus("Serial: open failed (" + menuPort.getSystemPortName() + ")");
+                setMenuResetEnabled(true);
+                return;
+            }
+
+            setMenuSerialStatus("Serial: " + menuPort.getSystemPortName());
+            setMenuResetEnabled(true);
+            attachMenuSerialListener(menuPort);
+
+            // Optional: say hello so the ESP can know it's MainMenu
+            writeMenuSerial("hello_menu");
+        } catch (Exception ex) {
+            ex.printStackTrace();
+            setMenuSerialStatus("Serial: error (" + ex.getMessage() + ")");
+            setMenuResetEnabled(true);
+            menuPort = null;
+        }
+    }
+
+    private void attachMenuSerialListener(SerialPort port) {
+        port.addDataListener(new com.fazecast.jSerialComm.SerialPortDataListener() {
+            @Override public int getListeningEvents() {
+                return SerialPort.LISTENING_EVENT_DATA_AVAILABLE;
+            }
+            @Override public void serialEvent(com.fazecast.jSerialComm.SerialPortEvent ev) {
+                if (ev.getEventType() != SerialPort.LISTENING_EVENT_DATA_AVAILABLE) return;
+                try {
+                    int avail;
+                    while ((avail = port.bytesAvailable()) > 0) {
+                        byte[] buf = new byte[Math.min(avail, 256)];
+                        int n = port.readBytes(buf, buf.length);
+                        if (n <= 0) break;
+                        for (int i = 0; i < n; i++) {
+                            char c = (char)(buf[i] & 0xFF);
+                            if (c == '\r') c = '\n';
+                            menuSerialBuf.append(c);
+                        }
+                        processMenuSerialBuffer();
+                        if (menuSerialBuf.length() > 4096) {
+                            menuSerialBuf.delete(0, menuSerialBuf.length() - 1024);
+                        }
+                    }
+                } catch (Exception ex) {
+                    ex.printStackTrace();
+                    setMenuSerialStatus("Serial: error (" + ex.getMessage() + ")");
+                }
+            }
+        });
+    }
+
+    private void processMenuSerialBuffer() {
+        int nl;
+        while ((nl = menuSerialBuf.indexOf("\n")) >= 0) {
+            String token = menuSerialBuf.substring(0, nl).trim().toLowerCase();
+            menuSerialBuf.delete(0, nl + 1);
+            if (token.isEmpty()) continue;
+            if (token.startsWith("button pressed:") || token.startsWith("button released:")) continue;
+
+            long now = System.currentTimeMillis();
+            Long last = menuDebounce.get(token);
+            if (last != null && (now - last) < MENU_DEBOUNCE_MS) continue;
+            menuDebounce.put(token, now);
+
+            handleMenuToken(token);
+        }
+    }
+
+    private void handleMenuToken(String token) {
+        // Any serial activity should keep the screen awake / pause slideshow
+        if (slideshow != null) slideshow.poke();
+
+        System.out.println("[MENU] token: " + token);
+        setMenuSerialStatus("Serial: " + (menuPort != null ? menuPort.getSystemPortName() : "?") + " (" + token + ")");
+
+        switch (token) {
+            case "blue":   SwingUtilities.invokeLater(() -> songbirdsBtn.doClick());  break; // Songbirds
+            case "green":  SwingUtilities.invokeLater(() -> ducksBtn.doClick());      break; // Ducks
+            case "yellow": SwingUtilities.invokeLater(() -> raptorsBtn.doClick());    break; // Raptors
+            case "white":
+            case "submit":
+            case "enter":
+            case "ok":     SwingUtilities.invokeLater(() -> shorebirdsBtn.doClick()); break; // Shorebirds
+            case "reconnect":
+                SwingUtilities.invokeLater(this::reconnectMenuSerial);
+                break;
+            default:
+                System.out.println("[MENU] unknown token: " + token);
+        }
+    }
+
+    private void writeMenuSerial(String message) {
+        try {
+            if (menuPort != null && menuPort.isOpen()) {
+                String m = message + "\n";
+                menuPort.writeBytes(m.getBytes(), m.length());
+            }
+        } catch (Exception ignored) {}
+    }
+
+    private void reconnectMenuSerial() {
+        long now = System.currentTimeMillis();
+        if (now - lastMenuSerialAttemptMs < 1000) return; // throttle
+        lastMenuSerialAttemptMs = now;
+
+        setMenuSerialStatus("Serial: reconnecting…");
+        setMenuResetEnabled(false);
+
+        SwingUtilities.invokeLater(() -> {
+            robustCloseMenuSerial();
+            new javax.swing.Timer(200, e -> {
+                openMenuSerial();
+                setMenuResetEnabled(true);
+                ((javax.swing.Timer)e.getSource()).stop();
+            }).start();
+        });
+    }
+
+    private void robustCloseMenuSerial() {
+        try {
+            if (menuPort == null) return;
+            try { menuPort.removeDataListener(); } catch (Throwable ignore) {}
+            try { menuPort.setComPortTimeouts(SerialPort.TIMEOUT_NONBLOCKING, 0, 0); } catch (Throwable ignore) {}
+            // quick drain
+            byte[] buf = new byte[512];
+            long end = System.currentTimeMillis() + 150;
+            while (System.currentTimeMillis() < end) {
+                int avail = menuPort.bytesAvailable();
+                if (avail <= 0) { Thread.sleep(10); continue; }
+                int toRead = Math.min(avail, buf.length);
+                menuPort.readBytes(buf, toRead);
+            }
+            try { menuPort.clearDTR(); } catch (Throwable ignore) {}
+            try { menuPort.clearRTS(); } catch (Throwable ignore) {}
+            try { Thread.sleep(120); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+            if (menuPort.isOpen()) menuPort.closePort();
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        } finally {
+            menuPort = null;
+            setMenuSerialStatus("Serial: closed");
+            setMenuResetEnabled(true);
+        }
+    }
+
+
+
+
+
+        // =========================
+    // UI helpers
+    // =========================
+
     private void installHoverAndPress(CircleButton btn) {
         btn.addMouseListener(new MouseAdapter() {
             @Override public void mouseEntered(MouseEvent e) {
@@ -157,144 +366,9 @@ slideshow = IdleSlideshowOverlay.attachTo(
         });
     }
 
-    // ---- Serial connection (listener-based), with CR/LF normalize + debounce ----
-    private void autoConnectSerial() {
-        // Try the last known good port first (if we have one)
-        if (connectedPortName != null && !"none".equalsIgnoreCase(connectedPortName)) {
-            SerialPort preferred = SerialPort.getCommPort(connectedPortName);
-            if (tryOpenPort(preferred)) return;
-        }
-
-        // Fallback: scan available ports and open the first that works
-        SerialPort[] ports = SerialPort.getCommPorts();
-        if (ports.length == 0) {
-            System.out.println("[MENU] No serial ports found.");
-            statusLabel.setText("Serial: none (no ports)");
-            showTemporaryMessage("No serial ports found");
-            return;
-        }
-        for (SerialPort p : ports) {
-            if (tryOpenPort(p)) return;
-        }
-
-        statusLabel.setText("Serial: none (open failed)");
-        showTemporaryMessage("Serial: open failed");
-    }
-
-    private boolean tryOpenPort(SerialPort p) {
-        if (p == null) return false;
-        try {
-            System.out.println("[MENU] Trying " + p.getSystemPortName());
-            p.setBaudRate(115200);
-            p.setNumDataBits(8);
-            p.setNumStopBits(SerialPort.ONE_STOP_BIT);
-            p.setParity(SerialPort.NO_PARITY);
-            p.setComPortTimeouts(SerialPort.TIMEOUT_READ_SEMI_BLOCKING, 100, 0);
-            try { p.setDTR(); } catch (Throwable ignore) {}
-            try { p.setRTS(); } catch (Throwable ignore) {}
-            if (!p.openPort()) {
-                System.out.println("[MENU] Failed to open " + p.getSystemPortName());
-                return false;
-            }
-
-            serialPort = p;
-            connectedPortName = serialPort.getSystemPortName();
-            statusLabel.setText("Serial: " + connectedPortName);
-            System.out.println("[MENU] Opened " + connectedPortName);
-            showTemporaryMessage("Connected to " + connectedPortName);
-
-            attachSerialListener(serialPort);
-            return true;
-        } catch (Exception ex) {
-            ex.printStackTrace();
-            try { if (p.isOpen()) p.closePort(); } catch (Exception ignore) {}
-            return false;
-        }
-    }
-
-    private void attachSerialListener(SerialPort port) {
-        port.addDataListener(new com.fazecast.jSerialComm.SerialPortDataListener() {
-            @Override public int getListeningEvents() {
-                return SerialPort.LISTENING_EVENT_DATA_AVAILABLE;
-            }
-            @Override public void serialEvent(com.fazecast.jSerialComm.SerialPortEvent event) {
-                try {
-                    if (event.getEventType() != SerialPort.LISTENING_EVENT_DATA_AVAILABLE) return;
-                    int available;
-                    while ((available = port.bytesAvailable()) > 0) {
-                        byte[] buf = new byte[Math.min(available, 256)];
-                        int n = port.readBytes(buf, buf.length);
-                        if (n <= 0) break;
-                        for (int i = 0; i < n; i++) {
-                            char c = (char)(buf[i] & 0xFF);
-                            if (c == '\r') c = '\n';
-                            serialBuf.append(c);
-                        }
-                        processSerialBuffer();
-                        if (serialBuf.length() > 4096) {
-                            serialBuf.delete(0, serialBuf.length() - 1024);
-                        }
-                    }
-                } catch (Exception ex) {
-                    ex.printStackTrace();
-                }
-            }
-        });
-    }
-
-    private void processSerialBuffer() {
-        int nl;
-        while ((nl = serialBuf.indexOf("\n")) >= 0) {
-            String line = serialBuf.substring(0, nl).trim().toLowerCase();
-            serialBuf.delete(0, nl + 1);
-            if (line.isEmpty()) continue;
-            if (line.startsWith("button pressed:") || line.startsWith("button released:")) continue;
-
-            long now = System.currentTimeMillis();
-            Long last = debounceMap.get(line);
-            if (last != null && (now - last) < DEBOUNCE_MS) continue;
-            debounceMap.put(line, now);
-
-            handleEspCommand(line);
-        }
-    }
-  // Any ESP/serial activity should cancel or hide the slideshow
-    private void handleEspCommand(String token) {
-          if (slideshow != null) slideshow.poke();
-        switch (token) {
-            case "blue":
-                System.out.println("[MENU] ESP -> blue (Songbirds)");
-                SwingUtilities.invokeLater(() -> songbirdsBtn.doClick());
-                break;
-            case "green":
-                System.out.println("[MENU] ESP -> green (Ducks)");
-                SwingUtilities.invokeLater(() -> ducksBtn.doClick());
-                break;
-            case "yellow":
-                System.out.println("[MENU] ESP -> yellow (Raptors)");
-                SwingUtilities.invokeLater(() -> raptorsBtn.doClick());
-                break;
-            case "submit": // your ESP sends "submit" for the bottom button
-            case "white":  // (optional) if firmware uses white for bottom
-                System.out.println("[MENU] ESP -> submit (Shorebirds)");
-                SwingUtilities.invokeLater(() -> shorebirdsBtn.doClick());
-                break;
-            default:
-                System.out.println("[MENU] ESP unknown token: " + token);
-        }
-    }
-
-    private void closeSerial() {
-        try { if (serialWatchdog != null) serialWatchdog.stop(); } catch (Exception ignore) {}
-        try {
-            if (serialPort != null) {
-                robustClose(serialPort);
-                serialPort = null;
-            }
-        } catch (Exception ignore) {}
-    }
-
-    // ---- click handling: launch quiz safely (async) ----
+    // =========================
+    // Click handling: launch quiz safely (async)
+    // =========================
     @Override
     public void actionPerformed(ActionEvent e) {
         Object src = e.getSource();
@@ -311,20 +385,18 @@ slideshow = IdleSlideshowOverlay.attachTo(
         try { if (sound != null) SoundUtil.playSound(sound); } catch (Exception ignore) {}
 
         final String tableFinal = table;
-        final String portNameFinal = connectedPortName; // may be "none" if not connected
+        final String portNameFinal = (menuPort != null && menuPort.isOpen())
+                ? menuPort.getSystemPortName()
+                : "none";
 
-        showTemporaryMessage("Launching " + tableFinal +
-                (portNameFinal != null && !"none".equalsIgnoreCase(portNameFinal) ? " (" + portNameFinal + ")" : "") + "…");
+        // Release the menu port so the quiz can own it
+        if (menuWatchdog != null) menuWatchdog.stop();
+        robustCloseMenuSerial();
 
-        // Release serial first (robustly) so quiz can own it
-        robustClose(serialPort);
-        serialPort = null;
-
-        // Launch the quiz without blocking the EDT
+        // Launch the quiz
         launchQuizAsync(tableFinal, portNameFinal);
     }
 
-    // === Safe async launcher (with small loading chip + full stack dialog) ===
     private void launchQuizAsync(String table, String portName) {
         final JDialog loading = new JDialog(this, false);
         loading.setUndecorated(true);
@@ -351,14 +423,15 @@ slideshow = IdleSlideshowOverlay.attachTo(
                 error = ex;
             }
             final BirdQuizGUI quizFinal = quiz;
-             if (slideshow != null) { slideshow.shutdown(); slideshow = null; }
+            if (slideshow != null) { slideshow.shutdown(); slideshow = null; }
 
             final Throwable errFinal = error;
             SwingUtilities.invokeLater(() -> {
                 loading.dispose();
                 if (errFinal != null) {
                     showStackDialog("Failed to open quiz", errFinal);
-                    autoConnectSerial(); // leave menu usable
+                    // Re-open menu serial so the menu remains usable
+                    openMenuSerial();
                     return;
                 }
                 if (quizFinal != null) {
@@ -372,7 +445,6 @@ slideshow = IdleSlideshowOverlay.attachTo(
     }
 
     private void showStackDialog(String title, Throwable t) {
-        // Console + dialog
         t.printStackTrace();
         StringWriter sw = new StringWriter();
         t.printStackTrace(new PrintWriter(sw));
@@ -388,44 +460,6 @@ slideshow = IdleSlideshowOverlay.attachTo(
         d.pack();
         d.setLocationRelativeTo(this);
         d.setVisible(true);
-    }
-
-    // ---- Robust close without PURGE_* (portable across jSerialComm versions) ----
-    private void robustClose(SerialPort p) {
-        if (p == null) return;
-        try {
-            try { p.removeDataListener(); } catch (Throwable ignore) {}
-            try { p.setComPortTimeouts(SerialPort.TIMEOUT_NONBLOCKING, 0, 0); } catch (Throwable ignore) {}
-
-            drainPort(p);
-
-            try { p.clearDTR(); } catch (Throwable ignore) {}
-            try { p.clearRTS(); } catch (Throwable ignore) {}
-
-            try { Thread.sleep(150); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
-
-            if (p.isOpen()) {
-                System.out.println("[MENU] Closing " + p.getSystemPortName());
-                p.closePort();
-            }
-        } catch (Exception ex) {
-            ex.printStackTrace();
-        }
-    }
-
-    // Read & discard pending bytes without PURGE_* constants
-    private static void drainPort(SerialPort p) {
-        if (p == null) return;
-        byte[] buf = new byte[1024];
-        long end = System.currentTimeMillis() + 150;
-        try {
-            while (System.currentTimeMillis() < end) {
-                int avail = p.bytesAvailable();
-                if (avail <= 0) { Thread.sleep(10); continue; }
-                int toRead = Math.min(avail, buf.length);
-                p.readBytes(buf, toRead);
-            }
-        } catch (Throwable ignore) {}
     }
 
     // ---- circular button with hover image + lighter hue on press ----
@@ -524,15 +558,15 @@ slideshow = IdleSlideshowOverlay.attachTo(
         }
     }
 
-    // ---- Toast helper (nice rounded chip, auto-fades) ----
+    // ---- Toast helper (rounded chip, auto-fades) ----
     private void showTemporaryMessage(String message) {
         final JWindow popup = new JWindow();
         popup.setBackground(new Color(0, 0, 0, 0)); // transparent window
 
         final JPanel toast = new JPanel() {
-            private final int arc = 18;     // corner radius
-            private final int shadow = 14;  // shadow thickness
-            private final int yOffset = 3;  // drop shadow offset
+            private final int arc = 18;
+            private final int shadow = 14;
+            private final int yOffset = 3;
             @Override
             protected void paintComponent(Graphics g) {
                 float alpha = 1f;

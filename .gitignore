@@ -1,23 +1,29 @@
-﻿@'
-# Maven
-target/
-
-# Build artifacts
-*.jar
-*.war
-*.zip
+## Build output
+/target/
 
 # IDE
-.idea/
-.vscode/
-*.iml
+/.idea/
+/*.iml
+/.project
+/.classpath
+/.settings/
 
 # OS
 .DS_Store
 Thumbs.db
-'@ | Set-Content -Encoding ascii .gitignore
-src/main/resources/images/slideshow_menu/**
-!src/main/resources/images/slideshow_menu/.keep
-# Slideshow assets (kept local)
-src/main/resources/images/slideshow_menu/**
-!src/main/resources/images/slideshow_menu/.keep
+
+# Runtime logs/temp
+logs/
+*.log
+
+# Resource-heavy assets (keep local only)
+src/main/resources/images/**
+src/main/resources/sounds/**
+
+# Keep empty folders with gitkeep (optional)
+!src/main/resources/images/.gitkeep
+!src/main/resources/sounds/.gitkeep
+
+# Local config/secrets
+src/main/resources/application.properties
+.env

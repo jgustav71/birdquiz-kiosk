@@ -3,6 +3,7 @@ package birdquiz;
 import javax.swing.ImageIcon;
 import javax.swing.JComponent;
 import javax.swing.JFrame;
+import javax.swing.JLabel;
 import javax.swing.Timer;
 
 import java.awt.AWTEvent;
@@ -39,6 +40,19 @@ public final class IdleSlideshowOverlay {
     private final Timer idleTimer;
     private final Timer slideTimer;
     private final Timer fadeTimer;
+
+
+    // --- Timer and ring
+    private javax.swing.Timer countdownTimer;
+    private CountdownRing countdownRing;
+    private JLabel countdownLabel;
+    // --- Fonts
+    private static final Font RADIO_BUTTON_FONT = new Font("Arial", Font.PLAIN, 25);
+    private static final Font SCORE_FONT        = new Font("Arial", Font.BOLD, 25);
+    private static final Font FEEDBACK_FONT     = new Font("Arial", Font.BOLD, 20);
+    private static final Font BUTTON_FONT       = new Font("Arial", Font.PLAIN, 12);
+
+
 
     private int current = 0;
     private int next = 1;
