@@ -14,6 +14,8 @@ import javax.swing.border.EmptyBorder;
 import com.fazecast.jSerialComm.SerialPort;
 
 public class MainMenu extends JFrame implements ActionListener {
+
+    
     // Idle slideshow overlay for the menu
     private IdleSlideshowOverlay slideshow;
 
@@ -40,6 +42,7 @@ public class MainMenu extends JFrame implements ActionListener {
 
     // Footer status
     private JLabel statusLabel;
+
 
     public MainMenu() {
         setTitle("Bird Quiz - Main Menu");
