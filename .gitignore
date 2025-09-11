@@ -7,3 +7,9 @@ target/
 *.iml
 .DS_Store
 Thumbs.db
+
+# Never commit JDKs
+**/openJdk-*/
+**/jdk-*/
+**/jre-*/
+
